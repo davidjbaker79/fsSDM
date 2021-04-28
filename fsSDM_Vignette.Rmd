@@ -1,0 +1,248 @@
+---
+title: "Hazel Dormouse: Summary of distribution information for Cornwall"
+Author: "David J Baker"
+output: 
+  html_document:
+    fig_caption: yes
+---
+
+<style>
+p.caption {
+  font-size: 1.2em;
+}
+</style>
+
+```{r setup, include=FALSE}
+
+# Set global knitr options
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+
+# Packages
+library(devtools)
+library(styler)
+library(tidyverse)
+library(sf)
+library(rgdal)
+library(gstat)
+library(ggsn)
+library(scico)
+library(cowplot)
+library(gtools)
+library(vegan)
+library(ranger)
+
+# Load package functions
+load_all()
+
+# Shared data path
+shareDir <- "C:/Users/DB625/OneDrive - University of Exeter/Fellowship_data/"
+
+# UK shapefile
+set_transform_wkt_comment(TRUE)
+cornwall_sf <- st_read(paste0(shareDir, "EnglishCountiesCornwall_2011"),"england_ct_2011")
+
+# Set grain
+grain <- 4
+
+# hexGrid 'grain' km2
+hexGrid_km <- makeHexGrid(cornwall_sf, hexCellArea = grain)
+
+# Extract butterfly data from ERCCIS database
+sqlite_file <- paste0(shareDir, "erccis_oct2020.sqlite")
+grp <- erccis.db.tbl(sqlite_file, "erccis_oct2020", sppGrps = 'terrestrial mammal')
+
+# Project butterfly data to BNG
+grpPrj <- db.transform.proj(grp, cornwall_sf, region = "Cornwall", df = FALSE)
+
+# Filter for target species 
+spp <- focal.species.select(grpPrj, "Hazel Dormouse", cornwall_sf, grain, hexGrid = hexGrid_km, collapse_time = FALSE)
+
+
+```
+
+## Overview of Data
+
+### Distribution of records 2000-2019
+
+The distribution of dormouse records in the ERCCIS database for the years 2000 - 2019 (inclusive). 
+
+```{r, echo = FALSE, fig.cap = "Figure 1. Distribution of Hazel Dormouse records (2000 - 2019)"}
+
+species.evaluation(grpPrj, "Hazel Dormouse", 2000, 2019, cornwall_sf, plotType = 'Map') 
+
+
+```
+
+### Number of records per year 2000-2019
+
+```{r, echo = FALSE, fig.cap = "Figure 2. Number of Hazel Dormouse records per year"}
+
+species.evaluation(grpPrj, "Hazel Dormouse", 2000, 2019, cornwall_sf, plotType = 'Hist') 
+
+
+```
+
+## Summary of sampling bias and effort
+
+We do not have non-detection data in the database and therefore have no data on sites that have been surveyed for dormice but non were detected. Thus, we do not know the degree to which these data are spatially biased and must infer this information from other data. One way of estimating bias is to look at the spatial distribution of records across similar species and use this information to infer the distribution of sampling effort across the landscape. 
+
+One way to map the degree of effort is to calculate the degree of inventory completeness in a cell and then map this variation across the region.
+
+```{r, echo = FALSE}
+
+invComp <- inventory.completeness(grpPrj, "terrestrial mammal", start_yr = 2000, end_yr = 2019, 1, cornwall_sf, grain, hexGrid = hexGrid_km)
+
+sampComp <- invComp %>% 
+  dplyr::filter(year == 2019) %>%
+  mutate(coverage = obs_spp / chao, site = as.character(site)) %>%
+  left_join(hexGrid_km, . , by = c("id" = "site")) %>%
+  ggplot() + 
+  geom_sf(aes(fill = coverage)) +
+  scale_fill_scico() + theme_minimal()
+print(sampComp)
+
+#tg <- target.group.weights(grpPrj, "terrestrial mammal", cornwall_sf, grain, hexGrid = hexGrid_km, showPlot = TRUE) 
+scico_palette_names()
+```
+
+# Simulation example
+
+### Environmental data
+
+CEH Landcover 2019 1km
+*LC_1 = Deciduous woodland
+*LC_3 = Arable
+*LC_4 = Improved grassland
+*LC_7 = Acid grassland
+*LC_9 = Heather
+*LC_10 = Heather grassland
+*LC_11 = Bog
+*LC_14 = Freshwater
+*LC_15 = Supralittoral rock
+*LC_16 = Supralittoral sediment
+*LC_17 = Littoral rock
+*LC_18 = Littoral sediment
+*LC_19 = Saltmarsh
+*LC_20 = Urban
+*LC_21 = Suburban
+
+Microclimate data
+*
+* etc
+
+```{r, echo = FALSE}
+
+# Load CEH land use data at 1 km2 with buffer 0 and 1
+land_cover_c19 <- get(load("C:/Users/DB625/OneDrive - University of Exeter/Fellowship_data/cornwall_ceh2019_landcover_1km.Rdata"))
+land_cover_c19 <- land_cover_c19[,c('id', 'X', 'Y', 'grain', paste0('LC_', c(1,3,4,7,9,10,11,14,15,16,17,18,19,20,21),'_0'))]
+
+# Load bioclimate variables
+bioClim <- get(load("C:/Users/DB625/OneDrive - University of Exeter/Fellowship_data/cornwall_climvars_1km_means.Rdata"))
+names(bioClim)
+
+# Merge 
+enviro_dat <- left_join(land_cover_c19, bioClim, by = c('id', 'X', 'Y', 'grain'))
+enviro_vars <- names(enviro_dat)[grep(names(enviro_dat), pattern = 'LC|_m')]
+
+```
+
+### Simulate a 50 species assemblage and sample
+
+```{r, echo = FALSE}
+
+# Simulate assemblage
+spp50 <- occupancy.multi(enviro_dat, enviro_vars, n_spp = 50, pca_axes = 3, 
+                         cornwall_sf, plotRichness = TRUE)
+
+# Extract survey data
+surv50 <- virtual.sampling(spp50, p_sites = 0.20, n_yrs = 10, spat_bias = TRUE, 
+                           samp_weights = NULL, bias_level = 3, rep_visit = 2.5, 
+                           maxVisit = 10, reli_score =  "high")
+
+# Example species plots
+plot.virtual.species(spp50, surv50, 20, 1:10)
+
+# Extract data for one species and models encounter rate
+
+# Zero filling equivalent lists
+focSpp <- surv50 %>%
+  dplyr::select(id, X, Y, det_2) %>%
+  dplyr::group_by(id, X, Y) %>%
+  dplyr::summarise(det = max(det_2)) %>%
+  left_join(enviro_dat, by = c("id", "X", "Y")) %>%
+  dplyr::select(id, X, Y, det, LC_1_0, LC_19_0, LC_20_0, LC_21_0, temp_ann_m, temp_gs_m, 
+               mtcm_m, mtcq_m, frost_m, precip_gs_m, soilm_gs_m) %>%
+  drop_na()
+
+focSpp$det
+# Split to training and test data
+focSpp$set <- rbinom(nrow(focSpp), 1, 0.25)
+sim.test <- focSpp[focSpp$set == 1,]
+sim.fit <- focSpp[focSpp$set == 0,]
+
+# Random forest
+form <- formula(det ~ LC_1_0 + LC_19_0 + LC_20_0 + LC_21_0 + temp_ann_m + temp_gs_m + 
+               mtcm_m + mtcq_m + frost_m + precip_gs_m + soilm_gs_m)
+rf <- ranger(form, data = sim.fit, importance = "permutation")
+
+pred <- predict(rf, data = sim.test)
+rbind(sim.test$det, predictions(pred))
+importance(rf)
+
+```
+
+```{r, echo = FALSE}
+
+#~#~#
+#~#~# SDM
+#~#~#
+#~# Focal species
+foc_sp_samp <- na.omit(vs_survey[[sp]])
+foc_sp_samp$w <- 1
+n <- length(foc_sp_samp$pa[foc_sp_samp$pa==1])
+foc_cell <- cellFromXY(bk,foc_sp_samp[,1:2])
+
+#~# Prevalence
+foc_sp <- na.omit(vs_com[[sp]])
+prev <- length(foc_sp$pa[foc_sp$pa==1])/length(foc_sp$pa)
+
+#~# Background sample
+bkSmap <- bkMap[!(bkMap$id %in% foc_cell),]
+bkSamp <- sample_n(bkSmap,2000,weight=bkSmap$bk)
+bkSamp$w <- ((n*(1-prev))/prev)/2000
+bkSamp$pa <- 0
+plot(rasterFromXYZ(bkSamp))
+
+#~# 
+spDat <- rbind(foc_sp_samp[,c('x','y','pa','w')],bkSamp[,c('x','y','pa','w')])
+spDat <- na.omit(cbind(spDat,raster::extract(swClimRast,spDat[,1:2])))
+
+# PCA covariates
+pca <- prcomp(na.omit(raster::extract(swClimRast,vs_com[[sp]][,1:2])))
+clim <- na.omit(cbind(vs_com[[20]],raster::extract(swClimRast,vs_com[[sp]][,1:2])))
+pca_clim <- cbind(clim[,1:2],predict(pca, newdata=clim))
+pca_clim_rst <- rasterFromXYZ(pca_clim)
+spDat <- na.omit(cbind(spDat,raster::extract(pca_clim_rst,spDat[,1:2])))
+
+# Models
+m1 <- glm(pa ~ .^3,family=binomial(link = "logit"),data=spDat[,c('pa','PC1','PC2','PC3','PC4','PC5')],weights=spDat$w)
+
+# predict to the new dataset
+pca_clim$pred <- predict(object=m1, newdata=pca_clim, type='response')
+pca_clim_r <- rasterFromXYZ(pca_clim[,c('x','y','pred')])
+w <- gaussWindow(4 * 5, 4)
+pca_clim_dens.ras <- focal(pca_clim_r, w = w / sum(w),pad = TRUE,na.rm = TRUE)
+pca_clim_dens.ras <- mask(pca_clim_dens.ras,pca_clim_r)
+pca_clim_dens.ras <- na.omit(data.frame(coordinates(pca_clim_dens.ras),pred=getValues(pca_clim_dens.ras)))
+
+sdm_plot <- ggplot() +geom_raster(aes(x=x,y=y,fill=pred),data=pca_clim_dens.ras) + 
+  scale_fill_distiller(palette = 'YlGnBu',direction = 1,name='P(1)') + 
+  #geom_point(aes(x=x,y=y),size=0.5,data=vs_com[[2]][vs_com[[2]]$pa==1,])+
+  coord_cartesian() + theme_minimal() %+replace% 
+  theme(axis.title = element_blank(),axis.text = element_blank(),legend.position = c(0.1,0.7))
+sdm_plot
+ggsave('Outputs/SDM_projection_figure.png',plot=sdm_plot,width=6,height=4)
+
+
+
+```

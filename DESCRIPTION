@@ -1,0 +1,33 @@
+Package: fsSDM
+Title: What the Package Does (One Line, Title Case)
+Version: 0.0.0.9000
+Authors@R: 
+    person(given = "David",
+           family = "Baker",
+           role = c("aut", "cre"),
+           email = "d.baker2@exeter.ac.uk",
+           comment = c(ORCID = "YOUR-ORCID-ID"))
+Description: Modelling species distributions at field-scales for landscape decisions.
+License: `use_mit_license()`
+Encoding: UTF-8
+LazyData: true
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.1.1
+Imports:
+    tidyr,
+    plyr,
+    data.table,
+    ggplot2,
+    ggthemes,
+    ggsn,
+    scico,
+    RSQLite,
+    sf,
+    raster,
+    rgeos,
+    gstat,
+    gtools,
+    scales,
+    stats,
+    rlang
+
